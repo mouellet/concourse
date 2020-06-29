@@ -28,6 +28,8 @@ type GardenBackend struct {
 	network       Network
 	rootfsManager RootfsManager
 	userNamespace UserNamespace
+
+	maxContainers int
 }
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 . UserNamespace
@@ -68,6 +70,12 @@ func WithKiller(k Killer) GardenBackendOpt {
 func WithNetwork(n Network) GardenBackendOpt {
 	return func(b *GardenBackend) {
 		b.network = n
+	}
+}
+
+func WithMaxContainersLimit(l int) GardenBackendOpt {
+	return func(b *GardenBackend) {
+		b.maxContainers = l
 	}
 }
 
@@ -139,6 +147,11 @@ func (b *GardenBackend) Ping() (err error) {
 //
 func (b *GardenBackend) Create(gdnSpec garden.ContainerSpec) (garden.Container, error) {
 	ctx := context.Background()
+
+	err := b.hasContainerCapacity(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking container capcity: %w", err)
+	}
 
 	maxUid, maxGid, err := b.userNamespace.MaxValidIds()
 	if err != nil {
@@ -316,4 +329,18 @@ func (b *GardenBackend) BulkInfo(handles []string) (info map[string]garden.Conta
 func (b *GardenBackend) BulkMetrics(handles []string) (metrics map[string]garden.ContainerMetricsEntry, err error) {
 	err = ErrNotImplemented
 	return
+}
+
+func (b *GardenBackend) hasContainerCapacity(ctx context.Context) error {
+	if b.maxContainers != 0 {
+		containers, err := b.client.Containers(ctx)
+		if err != nil {
+			return fmt.Errorf("getting list of containers: %w", err)
+		}
+
+		if len(containers) >= b.maxContainers {
+			return fmt.Errorf("max containers reached")
+		}
+	}
+	return nil
 }
